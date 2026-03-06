@@ -1,3 +1,4 @@
+import logging
 import os
 import secrets
 import threading
@@ -9,9 +10,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 from main import translate_folder
-from pocket_logger import PocketLogger
 
 load_dotenv()
+
+_LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+os.makedirs(_LOG_DIR, exist_ok=True)
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s]  %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(os.path.join(_LOG_DIR, "logs.log"), encoding="utf-8"),
+    ],
+)
+log = logging.getLogger(__name__)
+log.info("Subtitle Translator starting up")
+
 _raw_api_key = os.getenv("API_KEY")
 if not _raw_api_key:
     raise ValueError("API_KEY not found in environment variables. Please set it in the .env file.")
@@ -97,22 +112,13 @@ def _find_media_folders(name: str, type: str) -> list[str]:
     return []
 
 def _run(job_id: str, name: str, lang: str, type: str) -> None:
-    PocketLogger(
-        log_file_path="logs/logs.log", 
-        print_time=True,
-        print_message=True,
-        save_time=True,
-        save_message=True,
-        create_new_log_file=False,
-    )
-    
     try:
         paths = _find_media_folders(name, type)
         if not paths:
             raise ValueError(f"Media folder not found for name: {name}")
         
         for path in paths:
-            print(f"Found media folder: {path} for name: {name}")
+            log.info(f"Found media folder: {path} for name: {name}")
 
         summaries = []
         for path in paths:
@@ -120,6 +126,7 @@ def _run(job_id: str, name: str, lang: str, type: str) -> None:
             summaries.append(summary)
         _jobs[job_id] = {"status": "done", "result": summaries, "error": None}
     except Exception as e:
+        log.error(f"Job {job_id} failed: {e}", exc_info=True)
         _jobs[job_id] = {"status": "failed", "result": None, "error": str(e)}
 
 

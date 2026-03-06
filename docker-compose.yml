@@ -7,3 +7,6 @@ services:
       - .env
     volumes:
       - ./logs:/app/logs
+      - /mnt/mediapool/movies:/movies
+      - /mnt/mediapool/tv:/tv
+    restart: unless-stopped
