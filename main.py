@@ -23,7 +23,7 @@ logger = PocketLogger(
 )
 
 
-def is_movie_file(filename: str) -> bool:
+def is_media_file(filename: str) -> bool:
     return filename.lower().endswith((".mkv", ".mp4", ".avi", ".mov", ".flv", ".wmv"))
 
 def _fmt_stream(s: dict) -> str:
@@ -71,143 +71,185 @@ def pick_external_subtitle(folder: str, files: list[str], video_file: str) -> st
     return None
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description="Translate subtitles using OpenAI API.")
-    parser.add_argument("path", help="media folder path")
-    parser.add_argument("--lang", help="Language subtitles should be translated to (e.g. 'en', 'de', 'fr').")
-    args = parser.parse_args(argv)
+def translate_folder(path: str, lang: str) -> dict:
+    """Programmatic wrapper for the CLI logic. Translates subtitles in `path` to `lang`.
 
-    if not os.path.isdir(args.path):
-        print(f"Error: '{args.path}' is not a valid directory.", file=sys.stderr)
-        sys.exit(1)
+    Returns a summary dict with per-file results.
+    """
+    summary: dict = {"path": path, "lang": lang, "videos": {}}
 
-    if not args.lang:
-        print("Error: --lang is required (e.g. --lang en).", file=sys.stderr)
-        sys.exit(1)
+    if not os.path.isdir(path):
+        raise ValueError(f"'{path}' is not a valid directory")
 
-    print(f"Starting subtitle translation | folder: {args.path} | target lang: {args.lang}")
+    if not lang:
+        raise ValueError("target language is required")
 
-    files = [f for f in os.listdir(args.path) if os.path.isfile(os.path.join(args.path, f))]
-    video_files = [f for f in files if is_movie_file(f)]
+    print(f"Starting subtitle translation | folder: {path} | target lang: {lang}")
+
+    files = [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
+    video_files = [f for f in files if is_media_file(f)]
 
     if not video_files:
-        print("No video files found. Please ensure there are valid video files in the folder.", file=sys.stderr)
-        sys.exit(1)
+        raise ValueError("No video files found in the folder")
 
     print(f"Found {len(video_files)} video file(s):\n" + "\n".join(f"  - {f}" for f in video_files))
 
+    project_dir = os.path.dirname(os.path.abspath(__file__))
+    backup_dir = os.path.join(project_dir, "translated_subtitles")
+    try:
+        os.makedirs(backup_dir, exist_ok=True)
+    except Exception:
+        backup_dir = None
+
     for video_file in video_files:
-        video_path = os.path.join(args.path, video_file)
+        video_result: dict = {"status": None, "messages": [], "media_output": None, "backup_output": None}
+        video_path = os.path.join(path, video_file)
         usable_subtitle_path = None
 
-        # 1. CHECK IF ALREADY IN TARGET LANGUAGE (embedded or external)
-        if has_usable_subtitle_of_language(video_path, args.lang):
-            print(f"[{video_file}] Already has embedded subtitle in '{args.lang}'. Skipping.")
-            continue
+        def _log(msg: str) -> None:
+            pref = f"[{video_file}] {msg}"
+            video_result["messages"].append(pref)
+            print(pref)
 
-        if any(f".{args.lang}." in f for f in files if f.lower().endswith(".srt") and f.startswith(os.path.splitext(video_file)[0])):
-            print(f"[{video_file}] Already has external subtitle in '{args.lang}'. Skipping.")
+        # 1. CHECK IF ALREADY IN TARGET LANGUAGE (embedded or external)
+        try:
+            if has_usable_subtitle_of_language(video_path, lang):
+                video_result["status"] = "skipped"
+                _log(f"Already has embedded subtitle in '{lang}'. Skipping.")
+                summary["videos"][video_file] = video_result
+                continue
+        except Exception:
+            # If the check fails, continue to attempt external files
+            pass
+
+        if any(f".{lang}." in f for f in files if f.lower().endswith(".srt") and f.startswith(os.path.splitext(video_file)[0])):
+            video_result["status"] = "skipped"
+            _log(f"Already has external subtitle in '{lang}'. Skipping.")
+            summary["videos"][video_file] = video_result
             continue
 
         # 2. FIND A SUBTITLE TO TRANSLATE — prefer embedded, then external
         try:
             streams = list_subtitle_streams(video_path)
         except RuntimeError as e:
-            print(f"[{video_file}] Could not read subtitle streams: {e}. Falling back to external files.", file=sys.stderr)
+            _log(f"Could not read subtitle streams: {e}. Falling back to external files.")
             streams = []
 
         if streams:
-            print(f"[{video_file}] Found {len(streams)} embedded subtitle stream(s):\n" + "\n".join(f"  - {_fmt_stream(s)}" for s in streams))
+            _log(f"Found {len(streams)} embedded subtitle stream(s).")
             best_stream = find_usable_subtitle_stream(streams)
             if best_stream:
-                print(f"[{video_file}] Selected embedded stream: {_fmt_stream(best_stream)}")
-                extracted_path = os.path.join(args.path, f"{os.path.splitext(video_file)[0]}.usable.srt")
+                extracted_path = os.path.join(path, f"{os.path.splitext(video_file)[0]}.usable.srt")
                 try:
                     extract_subtitle_stream_to_srt(video_path, extracted_path, best_stream["sub_index"])
                     usable_subtitle_path = extracted_path
-                    print(f"[{video_file}] Successfully extracted embedded subtitle.")
+                    _log("Successfully extracted embedded subtitle.")
                 except Exception as e:
-                    print(f"[{video_file}] Failed to extract embedded subtitle: {e}. Falling back to external files.", file=sys.stderr)
+                    _log(f"Failed to extract embedded subtitle: {e}. Falling back to external files.")
             else:
-                print(f"[{video_file}] No usable (non-forced) embedded stream found. Falling back to external files.")
+                _log("No usable (non-forced) embedded stream found. Falling back to external files.")
         else:
-            print(f"[{video_file}] No embedded subtitle streams found. Looking for external .srt files...")
+            _log("No embedded subtitle streams found. Looking for external .srt files...")
 
         if not usable_subtitle_path:
             base = os.path.splitext(video_file)[0]
             srt_files = [f for f in files if f.lower().endswith(".srt") and f.startswith(base)]
             if srt_files:
-                print(f"[{video_file}] Found {len(srt_files)} external .srt file(s):\n" + "\n".join(f"  - {f}" for f in srt_files))
+                _log(f"Found {len(srt_files)} external .srt file(s): {srt_files}")
             else:
-                print(f"[{video_file}] No external .srt files found.", file=sys.stderr)
-            result = pick_external_subtitle(args.path, files, video_file)
-            if result is None:
-                print(f"[{video_file}] No usable subtitle found. Skipping.", file=sys.stderr)
+                video_result["status"] = "failed"
+                _log("No external .srt files found.")
+                summary["videos"][video_file] = video_result
                 continue
-            usable_subtitle_path = os.path.join(args.path, result)
-            print(f"[{video_file}] Selected external subtitle: {result}")
+            result = pick_external_subtitle(path, files, video_file)
+            if result is None:
+                video_result["status"] = "failed"
+                _log("No usable subtitle found.")
+                summary["videos"][video_file] = video_result
+                continue
+            usable_subtitle_path = os.path.join(path, result)
+            _log(f"Selected external subtitle: {result}")
 
         # 3. TRANSLATE
-        is_extracted = usable_subtitle_path == os.path.join(args.path, f"{os.path.splitext(video_file)[0]}.usable.srt")
+        is_extracted = usable_subtitle_path == os.path.join(path, f"{os.path.splitext(video_file)[0]}.usable.srt")
         try:
             subtitle = Subtitle.from_file(usable_subtitle_path)
         except ValueError as e:
-            print(f"[{video_file}] Invalid subtitle file: {e}", file=sys.stderr)
+            video_result["status"] = "failed"
+            _log(f"Invalid subtitle file: {e}")
+            summary["videos"][video_file] = video_result
             continue
 
-        print(f"[{video_file}] Translating to '{args.lang}' ...")
+        _log(f"Translating to '{lang}' ...")
         try:
-            translated_subtitle = translate_subtitle(subtitle, args.lang)
+            translated_subtitle = translate_subtitle(subtitle, lang)
         except Exception as e:
-            print(f"[{video_file}] Translation failed: {e}", file=sys.stderr)
+            video_result["status"] = "failed"
+            _log(f"Translation failed: {e}")
+            summary["videos"][video_file] = video_result
             continue
 
-        # Attempt to save into the movie folder, and always write a local backup
-        movie_output_path = os.path.join(args.path, f"{os.path.splitext(video_file)[0]}.{args.lang}.srt")
-        project_dir = os.path.dirname(os.path.abspath(__file__))
-        backup_dir = os.path.join(project_dir, "translated_subtitles")
-        try:
-            os.makedirs(backup_dir, exist_ok=True)
-        except Exception as e:
-            print(f"[{video_file}] Warning: could not create backup directory '{backup_dir}': {e}", file=sys.stderr)
-            backup_dir = None
+        # Attempt to save into the media folder, and always write a local backup
+        media_output_path = os.path.join(path, f"{os.path.splitext(video_file)[0]}.{lang}.srt")
 
-        saved_to_movie = False
+        saved_to_media = False
         saved_to_backup = False
 
         try:
-            translated_subtitle.to_srt_file(movie_output_path)
-            saved_to_movie = True
-            print(f"[{video_file}] Saved translated subtitle to movie folder: {movie_output_path}")
+            translated_subtitle.to_srt_file(media_output_path)
+            saved_to_media = True
+            _log(f"Saved translated subtitle to media folder: {media_output_path}")
+            video_result["media_output"] = media_output_path
         except Exception as e:
-            print(f"[{video_file}] Could not save subtitle to movie folder: {e}", file=sys.stderr)
+            _log(f"Could not save subtitle to media folder: {e}")
 
         if backup_dir:
-            backup_output_path = os.path.join(backup_dir, f"{os.path.splitext(video_file)[0]}.{args.lang}.srt")
+            backup_output_path = os.path.join(backup_dir, f"{os.path.splitext(video_file)[0]}.{lang}.srt")
             try:
                 translated_subtitle.to_srt_file(backup_output_path)
                 saved_to_backup = True
-                print(f"[{video_file}] Saved translated subtitle to local backup: {backup_output_path}")
+                _log(f"Saved translated subtitle to local backup: {backup_output_path}")
+                video_result["backup_output"] = backup_output_path
             except Exception as e:
-                print(f"[{video_file}] Failed to save local backup '{backup_output_path}': {e}", file=sys.stderr)
+                _log(f"Failed to save local backup '{backup_output_path}': {e}")
 
-        if not (saved_to_movie or saved_to_backup):
-            print(f"[{video_file}] Translation failed: could not save subtitle to movie folder or local backup.", file=sys.stderr)
+        if not (saved_to_media or saved_to_backup):
+            video_result["status"] = "failed"
+            _log("Translation failed: could not save subtitle to media folder or local backup.")
+            summary["videos"][video_file] = video_result
             continue
 
         if is_extracted:
-            # Only remove temporary extracted subtitle if we saved it somewhere
-            if (saved_to_movie or saved_to_backup) if 'saved_to_movie' in locals() else False:
+            if (saved_to_media or saved_to_backup):
                 try:
                     os.remove(usable_subtitle_path)
-                    print(f"[{video_file}] Deleted temporary extracted subtitle.")
+                    _log("Deleted temporary extracted subtitle.")
                 except Exception as e:
-                    print(f"[{video_file}] Warning: failed to delete temporary extracted subtitle: {e}", file=sys.stderr)
+                    _log(f"Warning: failed to delete temporary extracted subtitle: {e}")
             else:
-                print(f"[{video_file}] Leaving temporary extracted subtitle at {usable_subtitle_path} (save failed).", file=sys.stderr)
-        
+                _log(f"Leaving temporary extracted subtitle at {usable_subtitle_path} (save failed).")
+
+        video_result["status"] = "done"
+        summary["videos"][video_file] = video_result
+
+    return summary
 
 
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Translate subtitles using OpenAI API.")
+    parser.add_argument("path", help="media folder path")
+    parser.add_argument("--lang", help="Language subtitles should be translated to (e.g. 'en', 'de', 'fr').")
+    args = parser.parse_args(argv)
+    try:
+        summary = translate_folder(args.path, args.lang)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Print a concise summary for CLI users
+    for vf, info in summary.get("videos", {}).items():
+        status = info.get("status")
+        print(f"{vf}: {status}")
 
 if __name__ == "__main__":
     main()
