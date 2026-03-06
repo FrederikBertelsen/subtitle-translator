@@ -63,7 +63,7 @@ def _find_media_folders(name: str) -> list[str]:
                     if word in entry_words:
                         matching_words += 1
                     
-                if matching_words > len(name_words) - 1:
+                if matching_words > len(name_words) - 1 and matching_words > len(entry_words) - 2:
                     # look for "Season X" direct subfolders of entry_path, and return them all
                     season_folders = []
                     for sub_entry in os.listdir(entry_path):
