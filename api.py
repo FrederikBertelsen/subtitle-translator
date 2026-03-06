@@ -6,6 +6,7 @@ import uuid
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Security
 from fastapi.security.api_key import APIKeyHeader
+from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 from main import translate_folder
@@ -21,6 +22,21 @@ ENDPOINT_SCRAMBLE = os.getenv("ENDPOINT_SCRAMBLE", "")
 
 
 app = FastAPI(title="Subtitle Translator")
+
+# Configure CORS: use comma-separated origins from env var CORS_ALLOW_ORIGINS or allow all by default
+_cors_env = os.getenv("CORS_ALLOW_ORIGINS")
+if _cors_env:
+    _cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()]
+else:
+    _cors_origins = ["*"]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 _api_key_header = APIKeyHeader(name="X-API-Key")
 
