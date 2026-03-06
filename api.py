@@ -40,15 +40,6 @@ app.add_middleware(
 
 _api_key_header = APIKeyHeader(name="X-API-Key")
 
-PocketLogger(
-    log_file_path="logs/logs.log", 
-    print_time=True,
-    print_message=True,
-    save_time=True,
-    save_message=True,
-    create_new_log_file=False,
-)
-
 def _require_api_key(key: str = Security(_api_key_header)) -> None:
     # Security dependency may pass `None` in some edge cases; validate first.
     if key is None:
@@ -106,6 +97,15 @@ def _find_media_folders(name: str, type: str) -> list[str]:
     return []
 
 def _run(job_id: str, name: str, lang: str, type: str) -> None:
+    PocketLogger(
+        log_file_path="logs/logs.log", 
+        print_time=True,
+        print_message=True,
+        save_time=True,
+        save_message=True,
+        create_new_log_file=False,
+    )
+    
     try:
         paths = _find_media_folders(name, type)
         if not paths:
