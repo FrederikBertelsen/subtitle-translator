@@ -22,8 +22,9 @@ def list_subtitle_streams(path: str) -> List[Dict]:
         "error",
         "-select_streams",
         "s",
+        "-count_packets",
         "-show_entries",
-        "stream=index,codec_type,codec_name,codec_long_name,disposition:stream_tags=language,title",
+        "stream=index,codec_type,codec_name,codec_long_name,disposition,nb_read_packets:stream_tags=language,title",
         "-of",
         "json",
         path,
@@ -45,6 +46,7 @@ def list_subtitle_streams(path: str) -> List[Dict]:
                 "language": tags.get("language"),
                 "title": tags.get("title"),
                 "disposition": s.get("disposition", {}),
+                "nb_read_packets": int(s.get("nb_read_packets") or 0),
             }
         )
     return out
@@ -65,13 +67,16 @@ def print_subtitle_streams(path: str) -> None:
         default = " (default)" if s.get("disposition", {}).get("default") else ""
         sdh_marker = ""
         forced_marker = ""
+        commentary_marker = ""
         if _is_sdh(s) and "sdh" not in title_raw.lower():
             sdh_marker = " – SDH"
         if _is_forced(s) and "forced" not in title_raw.lower():
             forced_marker = " – Forced"
+        if _is_commentary(s) and "comment" not in title_raw.lower():
+            commentary_marker = " – Commentary"
         chosen = " <-- will be used" if best_idx is not None and s["sub_index"] == best_idx else ""
         print(
-            f"  {s['sub_index']}: ffprobe_index={s['ffprobe_index']} {s['codec_name']} [{lang}]{default}{title}{sdh_marker}{forced_marker}{chosen}"
+            f"  {s['sub_index']}: ffprobe_index={s['ffprobe_index']} {s['codec_name']} [{lang}]{default}{title}{sdh_marker}{forced_marker}{commentary_marker}{chosen}"
         )
 
 
@@ -80,6 +85,11 @@ def _is_english_lang(lang: Optional[str]) -> bool:
         return False
     l = lang.lower()
     return l.startswith("en") or l in ("eng", "english")
+
+
+def _is_commentary(s: Dict) -> bool:
+    title = (s.get("title") or "").lower()
+    return "comment" in title or "commentary" in title
 
 
 def _is_forced(s: Dict) -> bool:
@@ -101,26 +111,29 @@ def _is_sdh(s: Dict) -> bool:
     )
 
 
+def _best_in_group(group: List[Dict]) -> Optional[Dict]:
+    """Return the stream with the most lines in the group, or the first if all are 0."""
+    if not group:
+        return None
+    return max(group, key=lambda s: s.get("nb_read_packets", 0))
+
+
 def find_best_english_stream(streams: List[Dict]) -> Optional[Dict]:
     if not streams:
         return None
     english = [s for s in streams if lang_matches(s.get("language"), "en")]
-    # ignore forced tracks entirely
-    english_non_forced = [s for s in english if not _is_forced(s)]
+    # ignore forced and commentary tracks entirely
+    english_non_forced = [s for s in english if not _is_forced(s) and not _is_commentary(s)]
     if english_non_forced:
-        # prefer normal subtitles (not SDH), then SDH
+        # prefer normal subtitles (not SDH), then SDH; within each group pick most lines
         normal = [s for s in english_non_forced if not _is_sdh(s)]
         sdh = [s for s in english_non_forced if _is_sdh(s)]
         for group in (normal, sdh):
-            if not group:
-                continue
-            # prefer default among group
-            for s in group:
-                if s.get("disposition", {}).get("default"):
-                    return s
-            return group[0]
+            best = _best_in_group(group)
+            if best:
+                return best
 
-    # no usable (non-forced) English subtitles found
+    # no usable (non-forced, non-commentary) English subtitles found
     return None
 
 
@@ -137,36 +150,30 @@ def find_usable_subtitle_stream(streams: List[Dict]) -> Optional[Dict]:
     if not streams:
         return None
 
-    # Prefer non-forced English subtitles
-    english_non_forced = [s for s in streams if lang_matches(s.get("language"), "en") and not _is_forced(s)]
-    if english_non_forced:
-        normal = [s for s in english_non_forced if not _is_sdh(s)]
-        sdh = [s for s in english_non_forced if _is_sdh(s)]
+    def usable(s: Dict) -> bool:
+        return not _is_forced(s) and not _is_commentary(s)
+
+    # Prefer non-forced, non-commentary English subtitles
+    english_usable = [s for s in streams if lang_matches(s.get("language"), "en") and usable(s)]
+    if english_usable:
+        normal = [s for s in english_usable if not _is_sdh(s)]
+        sdh = [s for s in english_usable if _is_sdh(s)]
         for group in (normal, sdh):
-            if not group:
-                continue
-            for s in group:
-                if s.get("disposition", {}).get("default"):
-                    return s
-            return group[0]
+            best = _best_in_group(group)
+            if best:
+                return best
 
-    # Second priority: non-forced Danish subtitles
-    danish_non_forced = [s for s in streams if lang_matches(s.get("language"), "da") and not _is_forced(s)]
-    if danish_non_forced:
-        for s in danish_non_forced:
-            if s.get("disposition", {}).get("default"):
-                return s
-        return danish_non_forced[0]
+    # Second priority: non-forced, non-commentary Danish subtitles
+    danish_usable = [s for s in streams if lang_matches(s.get("language"), "da") and usable(s)]
+    if danish_usable:
+        return _best_in_group(danish_usable)
 
-    # Fallback: first non-forced subtitle (prefer default)
-    non_forced = [s for s in streams if not _is_forced(s)]
+    # Fallback: first non-forced, non-commentary subtitle
+    non_forced = [s for s in streams if usable(s)]
     if non_forced:
-        for s in non_forced:
-            if s.get("disposition", {}).get("default"):
-                return s
-        return non_forced[0]
+        return _best_in_group(non_forced)
 
-    # All subtitle streams are forced or no subtitles at all
+    # All subtitle streams are forced/commentary or no subtitles at all
     return None
 
 

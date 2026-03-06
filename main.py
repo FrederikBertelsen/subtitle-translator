@@ -34,7 +34,14 @@ def _fmt_stream(s: dict) -> str:
     return f"{s['sub_index']}: {s['codec_name']} [{lang}]{title}{flag_str}"
 
 
-def pick_external_subtitle(files: list[str], video_file: str) -> str | None:
+def _count_subtitle_lines(path: str) -> int:
+    try:
+        return len(Subtitle.from_file(path).lines)
+    except Exception:
+        return 0
+
+
+def pick_external_subtitle(folder: str, files: list[str], video_file: str) -> str | None:
     """Return the best external .srt path for translation, or None if none are suitable."""
     base = os.path.splitext(video_file)[0]
     srt_files = [f for f in files if f.lower().endswith(".srt") and f.startswith(base)]
@@ -42,17 +49,20 @@ def pick_external_subtitle(files: list[str], video_file: str) -> str | None:
     if not srt_files:
         return None
 
-    def best(candidates: list[str]) -> list[str]:
+    def filter_unwanted(candidates: list[str]) -> list[str]:
         filtered = [f for f in candidates if "forced" not in f.lower() and "commentary" not in f.lower()]
         return filtered or candidates
 
+    def pick_most_lines(candidates: list[str]) -> str:
+        return max(candidates, key=lambda f: _count_subtitle_lines(os.path.join(folder, f)))
+
     english_subs = [f for f in srt_files if ".en." in f or ".eng." in f or ".english." in f]
     if english_subs:
-        return best(english_subs)[0]
+        return pick_most_lines(filter_unwanted(english_subs))
 
     danish_subs = [f for f in srt_files if ".da." in f or ".dan." in f or ".danish." in f]
     if danish_subs:
-        return best(danish_subs)[0]
+        return pick_most_lines(filter_unwanted(danish_subs))
 
     # Fall back to a single unrecognised subtitle rather than guessing among many
     if len(srt_files) == 1:
@@ -130,7 +140,7 @@ def main(argv=None):
                 print(f"[{video_file}] Found {len(srt_files)} external .srt file(s):\n" + "\n".join(f"  - {f}" for f in srt_files))
             else:
                 print(f"[{video_file}] No external .srt files found.", file=sys.stderr)
-            result = pick_external_subtitle(files, video_file)
+            result = pick_external_subtitle(args.path, files, video_file)
             if result is None:
                 print(f"[{video_file}] No usable subtitle found. Skipping.", file=sys.stderr)
                 continue
