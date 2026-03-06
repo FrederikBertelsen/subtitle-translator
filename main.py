@@ -53,7 +53,7 @@ def pick_external_subtitle(folder: str, files: list[str], video_file: str) -> st
     return None
 
 
-def translate_folder(path: str, lang: str) -> dict:    
+def translate_folder(path: str, lang: str, on_progress=None) -> dict:    
     """Programmatic wrapper for the CLI logic. Translates subtitles in `path` to `lang`.
 
     Returns a summary dict with per-file results.
@@ -164,7 +164,7 @@ def translate_folder(path: str, lang: str) -> dict:
 
         _log(f"Translating to '{lang}' ...")
         try:
-            translated_subtitle = translate_subtitle(subtitle, lang)
+            translated_subtitle = translate_subtitle(subtitle, lang, on_progress=on_progress)
         except Exception as e:
             video_result["status"] = "failed"
             _log(f"Translation failed: {e}")

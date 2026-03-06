@@ -1,6 +1,7 @@
 import logging
 import os
 import secrets
+import sys
 import threading
 import uuid
 
@@ -15,16 +16,36 @@ load_dotenv()
 
 _LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
 os.makedirs(_LOG_DIR, exist_ok=True)
+
+# Capture original stdout before any redirection so the StreamHandler
+# always writes to the real terminal, avoiding infinite recursion.
+_orig_stdout = sys.stdout
+
 logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s]  %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
-        logging.StreamHandler(),
+        logging.StreamHandler(_orig_stdout),
         logging.FileHandler(os.path.join(_LOG_DIR, "logs.log"), encoding="utf-8"),
     ],
 )
 log = logging.getLogger(__name__)
+
+
+class _PrintToLog:
+    """Redirect sys.stdout so that print() calls anywhere in the app also go to the log file."""
+    def write(self, msg: str) -> None:
+        msg = msg.rstrip("\n\r")
+        if msg.strip():
+            log.info(msg)
+
+    def flush(self) -> None:
+        pass
+
+
+sys.stdout = _PrintToLog()  # type: ignore[assignment]
+
 log.info("Subtitle Translator starting up")
 
 _raw_api_key = os.getenv("API_KEY")
@@ -122,7 +143,9 @@ def _run(job_id: str, name: str, lang: str, type: str) -> None:
 
         summaries = []
         for path in paths:
-            summary = translate_folder(path, lang)
+            def _on_progress(current: int, total: int) -> None:
+                _jobs[job_id]["progress"] = f"{current}/{total}"
+            summary = translate_folder(path, lang, on_progress=_on_progress)
             summaries.append(summary)
         _jobs[job_id] = {"status": "done", "result": summaries, "error": None}
     except Exception as e:
@@ -139,7 +162,7 @@ async def translate(
 ):
     """Start an async translation job for the given media name. Returns a job_id to poll."""
     job_id = str(uuid.uuid4())
-    _jobs[job_id] = {"status": "pending", "result": None, "error": None}
+    _jobs[job_id] = {"status": "pending", "progress": None, "result": None, "error": None}
 
     threading.Thread(target=_run, args=(job_id, name, lang, type), daemon=True).start()
 
@@ -152,4 +175,4 @@ async def get_job(job_id: str, _: None = Depends(_require_api_key)):
     job = _jobs.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found.")
-    return {"status": job["status"], "result": job["result"], "error": job["error"]}
+    return {"status": job["status"], "progress": job.get("progress"), "result": job["result"], "error": job["error"]}

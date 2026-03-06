@@ -91,7 +91,7 @@ def _translate_batch(
     return response_lines, usage_info
 
 
-def translate_subtitle(subtitle: Subtitle, target_language: str) -> Subtitle:
+def translate_subtitle(subtitle: Subtitle, target_language: str, on_progress=None) -> Subtitle:
     global API_KEY, DEFAULT_MODEL
     if not API_KEY:
         raise ValueError("OPENAI_API_KEY is not set in the environment variables.")
@@ -164,6 +164,8 @@ def translate_subtitle(subtitle: Subtitle, target_language: str) -> Subtitle:
                     total_actual_input += usage_info.get("prompt_tokens", 0)
                     total_actual_output += usage_info.get("completion_tokens", 0)
                 print(f"  Batch {batch_num}/{num_batches} completed.")
+                if on_progress:
+                    on_progress(batch_num, num_batches)
                 break
             except Exception as e:
                 last_error = e
