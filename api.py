@@ -42,48 +42,52 @@ def _clean_name_and_split(name: str) -> list[str]:
         name = name.replace(char, " ")
     return list(set(name.lower().split()))
 
-def _find_media_folders(name: str) -> list[str]:
+def _find_media_folders(name: str, type: str) -> list[str]:
     MEDIA_BASE_PATHS = os.getenv("MEDIA_BASE_PATHS")
     if not MEDIA_BASE_PATHS:
         raise ValueError("MEDIA_BASE_PATH not set in environment variables.")
     base_paths = MEDIA_BASE_PATHS.split(",")
 
+    if type == "movie":
+        base_path = base_paths[0]  # movies path
+    else:
+        base_path = base_paths[1]  # tvshows path
+
     # Normalize the name by replacing common separators with spaces, and splitting into words
     name_words = _clean_name_and_split(name)
 
-    for base_path in base_paths:
-        # look if there is a direct subfolder that contains all the words in the name
-        for entry in os.listdir(base_path):
-            entry_path = os.path.join(base_path, entry)
-            if os.path.isdir(entry_path):
-                entry_words = _clean_name_and_split(entry)
+    # look if there is a direct subfolder that contains all the words in the name
+    for entry in os.listdir(base_path):
+        entry_path = os.path.join(base_path, entry)
+        if os.path.isdir(entry_path):
+            entry_words = _clean_name_and_split(entry)
+            
+            matching_words = 0
+            for word in name_words:
+                if word in entry_words:
+                    matching_words += 1
                 
-                matching_words = 0
-                for word in name_words:
-                    if word in entry_words:
-                        matching_words += 1
+            if matching_words > len(name_words) - 1 and matching_words > len(entry_words) - 2:
+                # look for "Season X" direct subfolders of entry_path, and return them all
+                season_folders = []
+                for sub_entry in os.listdir(entry_path):
+                    sub_entry_path = os.path.join(entry_path, sub_entry)
+                    if os.path.isdir(sub_entry_path) and "season" in sub_entry.lower():
+                        season_folders.append(sub_entry_path)
                     
-                if matching_words > len(name_words) - 1 and matching_words > len(entry_words) - 2:
-                    # look for "Season X" direct subfolders of entry_path, and return them all
-                    season_folders = []
-                    for sub_entry in os.listdir(entry_path):
-                        sub_entry_path = os.path.join(entry_path, sub_entry)
-                        if os.path.isdir(sub_entry_path) and "season" in sub_entry.lower():
-                            season_folders.append(sub_entry_path)
-                        
-                    if season_folders:
-                        return season_folders
-                    else:
-                        return [entry_path]
-                    
+                if season_folders:
+                    return season_folders
+                else:
+                    return [entry_path]
+                
 
     
             
     return []
 
-def _run(job_id: str, name: str, lang: str) -> None:
+def _run(job_id: str, name: str, lang: str, type: str) -> None:
     try:
-        paths = _find_media_folders(name)
+        paths = _find_media_folders(name, type)
         if not paths:
             raise ValueError(f"Media folder not found for name: {name}")
         
@@ -103,13 +107,14 @@ def _run(job_id: str, name: str, lang: str) -> None:
 async def translate(
     name: str = Query(..., description="Media name"),
     lang: str = Query(..., description="Target language code, e.g. 'en', 'da', 'de'"),
+    type: str = Query("movie", description="Media type: 'movie' or 'tvshow'"),
     _: None = Depends(_require_api_key),
 ):
     """Start an async translation job for the given media name. Returns a job_id to poll."""
     job_id = str(uuid.uuid4())
     _jobs[job_id] = {"status": "pending", "result": None, "error": None}
 
-    threading.Thread(target=_run, args=(job_id, name, lang), daemon=True).start()
+    threading.Thread(target=_run, args=(job_id, name, lang, type), daemon=True).start()
 
     return {"job_id": job_id}
 
