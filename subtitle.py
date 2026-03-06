@@ -114,7 +114,8 @@ class Subtitle:
 		"""Encode the subtitle lines back into SRT format."""
 		out = []
 		for ln in self.lines:
-			out.append(f"{str(ln.index)}|{ln.text.replace('\n', '<br>')}".strip())
+			text = ln.text.replace("\n", "<br>")
+			out.append(f"{ln.index}|{text}".strip())
 		return out
 	
 	def decode(self, encoded_lines: List[str]) -> "Subtitle":
