@@ -8,7 +8,6 @@ from extract_subtitle import (
     has_usable_subtitle_of_language,
     list_subtitle_streams,
 )
-from pocket_logger import PocketLogger
 from subtitle import Subtitle
 from translate_subtitle import translate_subtitle
 
@@ -54,16 +53,7 @@ def pick_external_subtitle(folder: str, files: list[str], video_file: str) -> st
     return None
 
 
-def translate_folder(path: str, lang: str) -> dict:
-    PocketLogger(
-        log_file_path="logs/logs.log", 
-        print_time=True,
-        print_message=True,
-        save_time=True,
-        save_message=True,
-        create_new_log_file=False,
-    )
-    
+def translate_folder(path: str, lang: str) -> dict:    
     """Programmatic wrapper for the CLI logic. Translates subtitles in `path` to `lang`.
 
     Returns a summary dict with per-file results.

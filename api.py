@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 from main import translate_folder
+from pocket_logger import PocketLogger
 
 load_dotenv()
 _raw_api_key = os.getenv("API_KEY")
@@ -39,6 +40,14 @@ app.add_middleware(
 
 _api_key_header = APIKeyHeader(name="X-API-Key")
 
+PocketLogger(
+    log_file_path="logs/logs.log", 
+    print_time=True,
+    print_message=True,
+    save_time=True,
+    save_message=True,
+    create_new_log_file=False,
+)
 
 def _require_api_key(key: str = Security(_api_key_header)) -> None:
     # Security dependency may pass `None` in some edge cases; validate first.
