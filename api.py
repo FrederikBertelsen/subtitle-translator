@@ -42,7 +42,7 @@ def _clean_name_and_split(name: str) -> list[str]:
         name = name.replace(char, " ")
     return list(set(name.lower().split()))
 
-def _find_media_folder(name: str) -> str | None:
+def _find_media_folders(name: str) -> list[str]:
     MEDIA_BASE_PATHS = os.getenv("MEDIA_BASE_PATHS")
     if not MEDIA_BASE_PATHS:
         raise ValueError("MEDIA_BASE_PATH not set in environment variables.")
@@ -62,22 +62,39 @@ def _find_media_folder(name: str) -> str | None:
                 for word in name_words:
                     if word in entry_words:
                         matching_words += 1
-                
+                    
                 if matching_words > len(name_words) - 1:
-                    return entry_path
+                    # look for "Season X" direct subfolders of entry_path, and return them all
+                    season_folders = []
+                    for sub_entry in os.listdir(entry_path):
+                        sub_entry_path = os.path.join(entry_path, sub_entry)
+                        if os.path.isdir(sub_entry_path) and "season" in sub_entry.lower():
+                            season_folders.append(sub_entry_path)
+                        
+                    if season_folders:
+                        return season_folders
+                    else:
+                        return [entry_path]
+                    
 
-    return None
+    
+            
+    return []
 
 def _run(job_id: str, name: str, lang: str) -> None:
     try:
-        path = _find_media_folder(name)
-        if path is None:
+        paths = _find_media_folders(name)
+        if not paths:
             raise ValueError(f"Media folder not found for name: {name}")
         
-        print(f"Found media folder: {path} for name: {name}")
+        for path in paths:
+            print(f"Found media folder: {path} for name: {name}")
 
-        summary = translate_folder(path, lang)
-        _jobs[job_id] = {"status": "done", "result": summary, "error": None}
+        summaries = []
+        for path in paths:
+            summary = translate_folder(path, lang)
+            summaries.append(summary)
+        _jobs[job_id] = {"status": "done", "result": summaries, "error": None}
     except Exception as e:
         _jobs[job_id] = {"status": "failed", "result": None, "error": str(e)}
 
