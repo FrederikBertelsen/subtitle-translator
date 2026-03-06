@@ -107,34 +107,39 @@ def translate_subtitle(subtitle: Subtitle, target_language: str) -> Subtitle:
     )
 
     client = OpenAI(api_key=API_KEY)
-    # Estimate tokens/cost for the whole job (one-time, not per-batch)
-    content = "\n".join(encoded_lines)
-    messages_for_count = [
-        {"role": "system", "content": DEFAULT_SYS_PROMPT},
+    # Split into batches up-front so we can estimate per-batch costs accurately.
+    batches = [encoded_lines[i:i + BATCH_SIZE] for i in range(0, total, BATCH_SIZE)]
+    num_batches = len(batches)
+
+    # Estimate tokens/cost for the whole job using per-batch counting.
+    # Count the overhead (system + user prompt + assistant) once per batch.
+    overhead_messages = [
         {"role": "user", "content": user_message},
         {"role": "assistant", "content": "Sure, I will translate the content exactly as requested."},
-        {"role": "user", "content": content},
     ]
-
-    token_count = client.responses.input_tokens.count(
+    overhead_count = client.responses.input_tokens.count(
         model=DEFAULT_MODEL,
         instructions=DEFAULT_SYS_PROMPT,
-        input=[  # type: ignore[arg-type]
-            {"role": str(m["role"]), "content": str(m.get("content", ""))}
-            for m in messages_for_count if m["role"] != "system"
-        ],
+        input=overhead_messages,  # type: ignore[arg-type]
     )
-    content_token_count = client.responses.input_tokens.count(
-        model=DEFAULT_MODEL,
-        input=content,
-    )
+    overhead_tokens = overhead_count.input_tokens
 
-    input_tokens = token_count.input_tokens
-    estimated_output_tokens = content_token_count.input_tokens
-    estimated_total = input_tokens + estimated_output_tokens
-    print(f"Estimated tokens: {input_tokens} (input) + ~{estimated_output_tokens} (output) = ~{estimated_total} total")
+    # Sum token counts for each batch's content
+    content_tokens_sum = 0
+    for batch in batches:
+        batch_content = "\n".join(batch)
+        batch_count = client.responses.input_tokens.count(
+            model=DEFAULT_MODEL,
+            input=batch_content,
+        )
+        content_tokens_sum += batch_count.input_tokens
 
-    estimated_input_cost = (input_tokens / 1000) * COST_PER_1K_INPUT
+    estimated_input_tokens = overhead_tokens * num_batches + content_tokens_sum
+    estimated_output_tokens = content_tokens_sum  # assume output size ≈ input size
+    estimated_total = estimated_input_tokens + estimated_output_tokens
+    print(f"Estimated tokens: {estimated_input_tokens} (input) + ~{estimated_output_tokens} (output) = ~{estimated_total} total")
+
+    estimated_input_cost = (estimated_input_tokens / 1000) * COST_PER_1K_INPUT
     estimated_output_cost = (estimated_output_tokens / 1000) * COST_PER_1K_OUTPUT
     estimated_cost = estimated_input_cost + estimated_output_cost
     print(f"Estimated cost:   ${estimated_input_cost:.4f} (input) + ~${estimated_output_cost:.4f} (output) = ~${estimated_cost:.4f}")
@@ -142,8 +147,6 @@ def translate_subtitle(subtitle: Subtitle, target_language: str) -> Subtitle:
     if MAX_REQUEST_COST and estimated_cost > MAX_REQUEST_COST:
         raise ValueError(f"Estimated cost ${estimated_cost:.4f} exceeds MAX_REQUEST_COST ${MAX_REQUEST_COST:.4f}. Aborting.")
 
-    batches = [encoded_lines[i:i + BATCH_SIZE] for i in range(0, total, BATCH_SIZE)]
-    num_batches = len(batches)
     print(f"Translating {total} subtitle lines to {target_language} in {num_batches} batch(es) of up to {BATCH_SIZE}...")
 
     all_response_lines: list[str] = []
