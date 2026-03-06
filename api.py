@@ -4,7 +4,7 @@ import secrets
 import threading
 import uuid
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Security, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Security
 from fastapi.security.api_key import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -33,7 +33,7 @@ else:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -131,17 +131,7 @@ async def translate(
     return {"job_id": job_id}
 
 
-@app.options("/translate" if ENDPOINT_SCRAMBLE == "" else f"/{ENDPOINT_SCRAMBLE}")
-async def _preflight_translate() -> Response:
-    # Provide explicit CORS preflight response in case middleware doesn't handle it earlier
-    allow_origin = _cors_origins[0] if len(_cors_origins) == 1 else ",".join(_cors_origins)
-    headers = {
-        "Access-Control-Allow-Origin": allow_origin,
-        "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-        "Access-Control-Allow-Headers": "X-API-Key, Content-Type, Authorization",
-        "Access-Control-Allow-Credentials": "true",
-    }
-    return Response(status_code=200, headers=headers)
+
 
 
 @app.get("/jobs/{job_id}")
