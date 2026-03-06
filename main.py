@@ -13,25 +13,8 @@ from subtitle import Subtitle
 from translate_subtitle import translate_subtitle
 
 
-logger = PocketLogger(
-    log_file_path="logs/logs.log", 
-    print_time=True,
-    print_message=True,
-    save_time=True,
-    save_message=True,
-    create_new_log_file=False,
-)
-
-
 def is_media_file(filename: str) -> bool:
     return filename.lower().endswith((".mkv", ".mp4", ".avi", ".mov", ".flv", ".wmv"))
-
-def _fmt_stream(s: dict) -> str:
-    lang = s.get("language") or "und"
-    title = f' "{s["title"]}"' if s.get("title") else ""
-    flags = [k for k in ("default", "forced") if s.get("disposition", {}).get(k)]
-    flag_str = f" ({', '.join(flags)})" if flags else ""
-    return f"{s['sub_index']}: {s['codec_name']} [{lang}]{title}{flag_str}"
 
 
 def _count_subtitle_lines(path: str) -> int:
@@ -72,6 +55,15 @@ def pick_external_subtitle(folder: str, files: list[str], video_file: str) -> st
 
 
 def translate_folder(path: str, lang: str) -> dict:
+    PocketLogger(
+        log_file_path="logs/logs.log", 
+        print_time=True,
+        print_message=True,
+        save_time=True,
+        save_message=True,
+        create_new_log_file=False,
+    )
+    
     """Programmatic wrapper for the CLI logic. Translates subtitles in `path` to `lang`.
 
     Returns a summary dict with per-file results.

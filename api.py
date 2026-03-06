@@ -1,4 +1,3 @@
-from ast import List
 import os
 import secrets
 import threading
@@ -129,9 +128,6 @@ async def translate(
     threading.Thread(target=_run, args=(job_id, name, lang, type), daemon=True).start()
 
     return {"job_id": job_id}
-
-
-
 
 
 @app.get("/jobs/{job_id}")
