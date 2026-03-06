@@ -79,10 +79,6 @@ def _find_media_folders(name: str, type: str) -> list[str]:
                     return season_folders
                 else:
                     return [entry_path]
-                
-
-    
-            
     return []
 
 def _run(job_id: str, name: str, lang: str, type: str) -> None:
