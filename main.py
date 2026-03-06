@@ -19,7 +19,7 @@ logger = PocketLogger(
     print_message=True,
     save_time=True,
     save_message=True,
-    create_new_log_file=True
+    create_new_log_file=False,
 )
 
 
