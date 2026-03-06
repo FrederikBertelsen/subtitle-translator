@@ -14,7 +14,7 @@ from translate_subtitle import translate_subtitle
 
 
 logger = PocketLogger(
-    log_file_path="log_path=logs/logs.log", 
+    log_file_path="logs/logs.log", 
     print_time=True,
     print_message=True,
     save_time=True,
