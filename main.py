@@ -148,15 +148,53 @@ def main(argv=None):
         print(f"[{video_file}] Translating to '{args.lang}' ...")
         try:
             translated_subtitle = translate_subtitle(subtitle, args.lang)
-            output_path = os.path.join(args.path, f"{os.path.splitext(video_file)[0]}.{args.lang}.srt")
-            translated_subtitle.to_srt_file(output_path)
         except Exception as e:
             print(f"[{video_file}] Translation failed: {e}", file=sys.stderr)
             continue
 
+        # Attempt to save into the movie folder, and always write a local backup
+        movie_output_path = os.path.join(args.path, f"{os.path.splitext(video_file)[0]}.{args.lang}.srt")
+        project_dir = os.path.dirname(os.path.abspath(__file__))
+        backup_dir = os.path.join(project_dir, "translated_subtitles")
+        try:
+            os.makedirs(backup_dir, exist_ok=True)
+        except Exception as e:
+            print(f"[{video_file}] Warning: could not create backup directory '{backup_dir}': {e}", file=sys.stderr)
+            backup_dir = None
+
+        saved_to_movie = False
+        saved_to_backup = False
+
+        try:
+            translated_subtitle.to_srt_file(movie_output_path)
+            saved_to_movie = True
+            print(f"[{video_file}] Saved translated subtitle to movie folder: {movie_output_path}")
+        except Exception as e:
+            print(f"[{video_file}] Could not save subtitle to movie folder: {e}", file=sys.stderr)
+
+        if backup_dir:
+            backup_output_path = os.path.join(backup_dir, f"{os.path.splitext(video_file)[0]}.{args.lang}.srt")
+            try:
+                translated_subtitle.to_srt_file(backup_output_path)
+                saved_to_backup = True
+                print(f"[{video_file}] Saved translated subtitle to local backup: {backup_output_path}")
+            except Exception as e:
+                print(f"[{video_file}] Failed to save local backup '{backup_output_path}': {e}", file=sys.stderr)
+
+        if not (saved_to_movie or saved_to_backup):
+            print(f"[{video_file}] Translation failed: could not save subtitle to movie folder or local backup.", file=sys.stderr)
+            continue
+
         if is_extracted:
-            os.remove(usable_subtitle_path)
-            print(f"[{video_file}] Deleted temporary extracted subtitle.")
+            # Only remove temporary extracted subtitle if we saved it somewhere
+            if (saved_to_movie or saved_to_backup) if 'saved_to_movie' in locals() else False:
+                try:
+                    os.remove(usable_subtitle_path)
+                    print(f"[{video_file}] Deleted temporary extracted subtitle.")
+                except Exception as e:
+                    print(f"[{video_file}] Warning: failed to delete temporary extracted subtitle: {e}", file=sys.stderr)
+            else:
+                print(f"[{video_file}] Leaving temporary extracted subtitle at {usable_subtitle_path} (save failed).", file=sys.stderr)
         
 
 
