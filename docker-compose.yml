@@ -6,8 +6,8 @@ services:
     env_file:
       - .env
     volumes:
-      - ./logs:/app/logs
-      - ./translated_subtitles:/app/translated_subtitles
+      - ./logs:/app/subtitle_translator/logs
+      - ./translated_subtitles:/app/subtitle_translator/translated_subtitles
       - /mnt/mediapool/movies:/movies
       - /mnt/mediapool/tvshows:/tvshows
     restart: unless-stopped
