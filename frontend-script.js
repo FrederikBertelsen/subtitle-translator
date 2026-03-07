@@ -176,6 +176,16 @@
         var jobsBase = JOBS_BASE || '/jobs';
         var mediaName = mediaTitle || '';
 
+        function formatDuration(ms) {
+            var sec = Math.floor(ms / 1000);
+            var h = Math.floor(sec / 3600);
+            var m = Math.floor((sec % 3600) / 60);
+            var s = sec % 60;
+            function pad(n) { return n < 10 ? '0' + n : '' + n; }
+            if (h > 0) return h + ':' + pad(m) + ':' + pad(s);
+            return pad(m) + ':' + pad(s);
+        }
+
         // Validate required information before sending any requests
         if (!mediaName) {
             console.error('[SubtitleGen] Error: missing media name; aborting.');
@@ -220,6 +230,7 @@
             }
             log('Started job', jobId);
             statusEl.textContent = 'Started: ' + jobId;
+            var jobStartTs = Date.now();
 
             var jobUrlBase = apiBase + jobsBase;
             var intervalId = setInterval(function () {
@@ -241,10 +252,18 @@
                     }
                     var j = null;
                     try { j = JSON.parse(r.responseText); } catch (e) { j = null; }
-                    if (j && j.status === 'pending' && j.progress) {
+                    if (j && (j.status === 'queued' || j.status === 'running') && j.progress) {
                         var parts = j.progress.split('/');
-                        var pct = Math.round((parseInt(parts[0], 10) / parseInt(parts[1], 10)) * 100);
-                        statusEl.textContent = 'Translating ' + pct + '% (' + j.progress + ')';
+                        var current = parseInt(parts[0], 10) || 0;
+                        var total = parseInt(parts[1], 10) || 0;
+                        var elapsed = jobStartTs ? (Date.now() - jobStartTs) : 0;
+                        var elapsedStr = formatDuration(elapsed);
+                        var pct = total > 0 ? Math.round((current / total) * 100) : 0;
+                        if (current === 0) {
+                            statusEl.textContent = 'Preparing translation… (' + current + ' / ' + total + ' lines' + (elapsedStr ? ' — ' + elapsedStr + ' elapsed' : '') + ')';
+                        } else {
+                            statusEl.textContent = 'Translating ' + pct + '% — ' + current + '/' + total + ' lines — ' + elapsedStr + ' elapsed';
+                        }
                     } else {
                         statusEl.textContent = j && j.status ? j.status : 'unknown';
                     }
