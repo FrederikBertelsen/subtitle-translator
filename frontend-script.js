@@ -60,90 +60,103 @@
 
         mediaType = detectMediaType();
 
-        var mediaEl = document.querySelector('div.nameContainer h1');
-        mediaTitle = mediaEl ? (mediaEl.innerText || '').trim() : '';
-        if (!mediaTitle) {
-            console.error('[SubtitleGen] Error: media title not found (div.nameContainer h1). Aborting.');
-            return;
-        }
+        var waitAttempts = 0;
+        var maxWaitAttempts = 30; // ~4.5s with the interval below
+        var waitIntervalMs = 150;
 
-        var hasEng = false;
-        var hasDa = false;
-
-        if (mediaType === 'movie') {
-            var select = document.querySelector('select.selectSubtitles');
-            if (!select) {
-                console.error('[SubtitleGen] Error: No subtitles selector found (select.selectSubtitles). Aborting.');
+        function proceedWhenTitleReady() {
+            var mediaEl = document.querySelector('div.nameContainer h1');
+            mediaTitle = mediaEl ? (mediaEl.innerText || '').trim() : '';
+            if (!mediaTitle && waitAttempts < maxWaitAttempts) {
+                waitAttempts++;
+                setTimeout(proceedWhenTitleReady, waitIntervalMs);
+                return;
+            }
+            if (!mediaTitle) {
+                console.error('[SubtitleGen] Error: media title not found (div.nameContainer h1). Aborting.');
                 return;
             }
 
-            var options = select.querySelectorAll('option');
-            var candidates = [];
-            for (var i = 0; i < options.length; i++) {
-                if (options[i].value !== '-1') candidates.push(options[i]);
+            var hasEng = false;
+            var hasDa = false;
+
+            if (mediaType === 'movie') {
+                var select = document.querySelector('select.selectSubtitles');
+                if (!select) {
+                    console.error('[SubtitleGen] Error: No subtitles selector found (select.selectSubtitles). Aborting.');
+                    return;
+                }
+
+                var options = select.querySelectorAll('option');
+                var candidates = [];
+                for (var i = 0; i < options.length; i++) {
+                    if (options[i].value !== '-1') candidates.push(options[i]);
+                }
+
+                var reEng = /\benglish\b|\beng\b/i;
+                var reDa = /\bdanish\b|\bda\b|\bdansk\b/i;
+                for (i = 0; i < candidates.length; i++) {
+                    var t = (candidates[i].textContent || candidates[i].innerText || '').trim();
+                    if (reEng.test(t)) hasEng = true;
+                    if (reDa.test(t)) hasDa = true;
+                }
+                log('Subtitle scan: hasEnglish=' + hasEng + ' hasDanish=' + hasDa);
+            } else {
+                log('TV show — skipping subtitle scan, showing all buttons.');
             }
 
-            var reEng = /\benglish\b|\beng\b/i;
-            var reDa = /\bdanish\b|\bda\b|\bdansk\b/i;
-            for (i = 0; i < candidates.length; i++) {
-                var t = (candidates[i].textContent || candidates[i].innerText || '').trim();
-                if (reEng.test(t)) hasEng = true;
-                if (reDa.test(t)) hasDa = true;
+            var container = document.getElementById('subtitle-gen-container');
+            if (!container) {
+                container = document.createElement('div');
+                container.id = 'subtitle-gen-container';
+                container.style.marginTop = '8px';
+                buttonsContainer.appendChild(container);
+            } else {
+                container.innerHTML = '';
+                if (!container.parentElement) buttonsContainer.appendChild(container);
             }
-            log('Subtitle scan: hasEnglish=' + hasEng + ' hasDanish=' + hasDa);
-        } else {
-            log('TV show — skipping subtitle scan, showing all buttons.');
+
+            function makeButton(langCode, label) {
+                if (container.querySelector('.gen-' + langCode + '-btn')) return;
+                var wrapper = document.createElement('div');
+                wrapper.style.display = 'inline-flex';
+                wrapper.style.alignItems = 'center';
+                wrapper.style.gap = '8px';
+                wrapper.style.marginRight = '8px';
+
+                var btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'gen-' + langCode + '-btn';
+                btn.textContent = label;
+                btn.style.padding = '6px 10px';
+                btn.style.cursor = 'pointer';
+
+                var status = document.createElement('span');
+                status.className = 'gen-' + langCode + '-status';
+                status.style.fontSize = '0.9em';
+                status.style.color = '#fff';
+                status.textContent = '';
+
+                wrapper.appendChild(btn);
+                wrapper.appendChild(status);
+                container.appendChild(wrapper);
+
+                btn.addEventListener('click', function () { startGeneration(btn, status, langCode); });
+            }
+
+            if (!hasEng) makeButton('en', 'Generate english subtitles');
+            if (!hasDa) makeButton('da', 'Generate danish subtitles');
+
+            if (hasEng && hasDa) {
+                var note = document.createElement('div');
+                note.textContent = 'English and Danish subtitles already available.';
+                note.style.fontSize = '0.9em';
+                note.style.color = '#fff';
+                container.appendChild(note);
+            }
         }
 
-        var container = document.getElementById('subtitle-gen-container');
-        if (!container) {
-            container = document.createElement('div');
-            container.id = 'subtitle-gen-container';
-            container.style.marginTop = '8px';
-            buttonsContainer.appendChild(container);
-        } else {
-            container.innerHTML = '';
-            if (!container.parentElement) buttonsContainer.appendChild(container);
-        }
-
-        function makeButton(langCode, label) {
-            if (container.querySelector('.gen-' + langCode + '-btn')) return;
-            var wrapper = document.createElement('div');
-            wrapper.style.display = 'inline-flex';
-            wrapper.style.alignItems = 'center';
-            wrapper.style.gap = '8px';
-            wrapper.style.marginRight = '8px';
-
-            var btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'gen-' + langCode + '-btn';
-            btn.textContent = label;
-            btn.style.padding = '6px 10px';
-            btn.style.cursor = 'pointer';
-
-            var status = document.createElement('span');
-            status.className = 'gen-' + langCode + '-status';
-            status.style.fontSize = '0.9em';
-            status.style.color = '#fff';
-            status.textContent = '';
-
-            wrapper.appendChild(btn);
-            wrapper.appendChild(status);
-            container.appendChild(wrapper);
-
-            btn.addEventListener('click', function () { startGeneration(btn, status, langCode); });
-        }
-
-        if (!hasEng) makeButton('en', 'Generate english subtitles');
-        if (!hasDa) makeButton('da', 'Generate danish subtitles');
-
-        if (hasEng && hasDa) {
-            var note = document.createElement('div');
-            note.textContent = 'English and Danish subtitles already available.';
-            note.style.fontSize = '0.9em';
-            note.style.color = '#fff';
-            container.appendChild(note);
-        }
+        proceedWhenTitleReady();
     }
 
     function detectMediaType() {
