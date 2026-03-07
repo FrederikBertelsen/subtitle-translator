@@ -72,7 +72,7 @@ async def _restrict_endpoints(request: Request, call_next):
     path = request.url.path.rstrip("/")
     if path == "":
         path = "/"
-    if path == _translation_path or path == _job_root or path.startswith(_job_root + "/"):
+    if path == _translation_path or path.startswith(_translation_path + "/") or path == _job_root or path.startswith(_job_root + "/"):
         return await call_next(request)
     return JSONResponse(status_code=404, content={"detail": "Not Found"})
 
@@ -88,19 +88,6 @@ def _require_api_key(key: str = Security(_api_key_header)) -> None:
 
 
 _jobs: dict[str, dict] = {}
-
-
-def _count_video_files(path: str) -> int:
-    try:
-        return len(
-            [
-                entry
-                for entry in os.listdir(path)
-                if os.path.isfile(os.path.join(path, entry)) and entry.lower().endswith(config.VIDEO_EXTENSIONS)
-            ]
-        )
-    except Exception:
-        return 0
 
 
 def _run(job_id: str, name: str, lang: str, type: str) -> None:
