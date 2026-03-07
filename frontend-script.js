@@ -141,7 +141,7 @@
             var note = document.createElement('div');
             note.textContent = 'English and Danish subtitles already available.';
             note.style.fontSize = '0.9em';
-            note.style.color = '#444';
+            note.style.color = '#fff';
             container.appendChild(note);
         }
     }
