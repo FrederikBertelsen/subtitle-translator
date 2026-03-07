@@ -1,41 +1,7 @@
-import os
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageParam
-from dotenv import load_dotenv
-
-from subtitle import Subtitle
-
-load_dotenv()
-
-API_KEY = os.getenv("OPENAI_API_KEY")
-DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gpt-4o")
-COST_PER_1K_INPUT = float(os.getenv("DEFAULT_MODEL_COST_PER_1K_TOKENS_INPUT", "0"))
-COST_PER_1K_OUTPUT = float(os.getenv("DEFAULT_MODEL_COST_PER_1K_TOKENS_OUTPUT", "0"))
-MAX_REQUEST_COST = float(os.getenv("MAX_REQUEST_COST", "1"))
-BATCH_SIZE = int(os.getenv("BATCH_SIZE", "100"))
-RETRY_COUNT = int(os.getenv("RETRY_COUNT", "2"))
-
-DEFAULT_SYS_PROMPT = (
-    "You are a professional translator. Respond only with the content translated. "
-    "Do not add explanations, comments, or any extra text."
-)
-
-DEFAULT_USER_PROMPT = (
-    "Please respect the original meaning, maintain the original format, "
-    "and rewrite the following content in {target_language}.\n\n{context}"
-)
-
-CONTEXT_TEMPLATE = (
-    "This is a subtitle file. Each line is formatted as INDEX|TEXT, "
-    "where INDEX is the subtitle line number and TEXT is the dialogue. "
-    "And \"<br>\" is a line break within a subtitle. "
-    "Translate ONLY the TEXT portion of each line. Keep the INDEX and | separator and <br> line breaks unchanged. "
-    "The INDEX numbers may not start at 1 — preserve the exact index numbers from the input in your response.\n\n"
-    "CRITICAL REQUIREMENTS:\n"
-    "1. You MUST translate every single line without changing the meaning\n"
-    "2. Keep the exact format: INDEX|translated text\n"
-    "3. If a line contains only sounds/exclamations, still translate them appropriately"
-)
+from subtitle_translator.subtitle import Subtitle
+from subtitle_translator import config
 
 
 def _translate_batch(
@@ -46,14 +12,14 @@ def _translate_batch(
     content = "\n".join(batch)
 
     messages: list[ChatCompletionMessageParam] = [
-        {"role": "system", "content": DEFAULT_SYS_PROMPT},
+        {"role": "system", "content": config.DEFAULT_SYS_PROMPT},
         {"role": "user", "content": user_message},
         {"role": "assistant", "content": "Sure, I will translate the content exactly as requested."},
         {"role": "user", "content": content},
     ]
 
     response = client.chat.completions.create(
-        model=DEFAULT_MODEL,
+        model=config.DEFAULT_MODEL,
         messages=messages,
         temperature=1,
     )
@@ -92,95 +58,92 @@ def _translate_batch(
 
 
 def translate_subtitle(subtitle: Subtitle, target_language: str, on_progress=None) -> Subtitle:
-    global API_KEY, DEFAULT_MODEL
-    if not API_KEY:
+    if not config.OPENAI_API_KEY:
         raise ValueError("OPENAI_API_KEY is not set in the environment variables.")
-    if not DEFAULT_MODEL:
+    if not config.DEFAULT_MODEL:
         raise ValueError("DEFAULT_MODEL is not set in the environment variables.")
 
     encoded_lines = subtitle.encode()
     total = len(encoded_lines)
 
-    user_message = DEFAULT_USER_PROMPT.format(
+    user_message = config.DEFAULT_USER_PROMPT.format(
         target_language=target_language,
-        context=CONTEXT_TEMPLATE,
+        context=config.CONTEXT_TEMPLATE,
     )
 
-    client = OpenAI(api_key=API_KEY)
-    # Split into batches up-front so we can estimate per-batch costs accurately.
-    batches = [encoded_lines[i:i + BATCH_SIZE] for i in range(0, total, BATCH_SIZE)]
+    client = OpenAI(api_key=config.OPENAI_API_KEY)
+    batches = [encoded_lines[i:i + config.BATCH_SIZE] for i in range(0, total, config.BATCH_SIZE)]
     num_batches = len(batches)
 
-    # Estimate tokens/cost for the whole job using per-batch counting.
-    # Count the overhead (system + user prompt + assistant) once per batch.
     overhead_messages = [
         {"role": "user", "content": user_message},
         {"role": "assistant", "content": "Sure, I will translate the content exactly as requested."},
     ]
     overhead_count = client.responses.input_tokens.count(
-        model=DEFAULT_MODEL,
-        instructions=DEFAULT_SYS_PROMPT,
+        model=config.DEFAULT_MODEL,
+        instructions=config.DEFAULT_SYS_PROMPT,
         input=overhead_messages,  # type: ignore[arg-type]
     )
     overhead_tokens = overhead_count.input_tokens
 
-    # Sum token counts for each batch's content
     content_tokens_sum = 0
     for batch in batches:
         batch_content = "\n".join(batch)
         batch_count = client.responses.input_tokens.count(
-            model=DEFAULT_MODEL,
+            model=config.DEFAULT_MODEL,
             input=batch_content,
         )
         content_tokens_sum += batch_count.input_tokens
 
     estimated_input_tokens = overhead_tokens * num_batches + content_tokens_sum
-    estimated_output_tokens = content_tokens_sum  # assume output size ≈ input size
+    estimated_output_tokens = content_tokens_sum
     estimated_total = estimated_input_tokens + estimated_output_tokens
     print(f"Estimated tokens: {estimated_input_tokens} (input) + ~{estimated_output_tokens} (output) = ~{estimated_total} total")
 
-    estimated_input_cost = (estimated_input_tokens / 1000) * COST_PER_1K_INPUT
-    estimated_output_cost = (estimated_output_tokens / 1000) * COST_PER_1K_OUTPUT
+    estimated_input_cost = (estimated_input_tokens / 1000) * config.COST_PER_1K_INPUT
+    estimated_output_cost = (estimated_output_tokens / 1000) * config.COST_PER_1K_OUTPUT
     estimated_cost = estimated_input_cost + estimated_output_cost
     print(f"Estimated cost:   ${estimated_input_cost:.4f} (input) + ~${estimated_output_cost:.4f} (output) = ~${estimated_cost:.4f}")
 
-    if MAX_REQUEST_COST and estimated_cost > MAX_REQUEST_COST:
-        raise ValueError(f"Estimated cost ${estimated_cost:.4f} exceeds MAX_REQUEST_COST ${MAX_REQUEST_COST:.4f}. Aborting.")
+    if config.MAX_REQUEST_COST and estimated_cost > config.MAX_REQUEST_COST:
+        raise ValueError(f"Estimated cost ${estimated_cost:.4f} exceeds MAX_REQUEST_COST ${config.MAX_REQUEST_COST:.4f}. Aborting.")
 
-    print(f"Translating {total} subtitle lines to {target_language} in {num_batches} batch(es) of up to {BATCH_SIZE}...")
+    print(f"Translating {total} subtitle lines to {target_language} in {num_batches} batch(es) of up to {config.BATCH_SIZE}...")
 
     all_response_lines: list[str] = []
     total_actual_input = 0
     total_actual_output = 0
+    completed_lines = 0
 
     for batch_num, batch in enumerate(batches, start=1):
         print(f"Batch {batch_num}/{num_batches} ({len(batch)} lines):")
         last_error: Exception | None = None
-        for attempt in range(1, RETRY_COUNT + 2):  # 1 initial + RETRY_COUNT retries
+        for attempt in range(1, config.RETRY_COUNT + 2):
             try:
                 response_lines, usage_info = _translate_batch(client, batch, user_message)
                 all_response_lines.extend(response_lines)
                 if usage_info:
                     total_actual_input += usage_info.get("prompt_tokens", 0)
                     total_actual_output += usage_info.get("completion_tokens", 0)
+                completed_lines += len(batch)
                 print(f"  Batch {batch_num}/{num_batches} completed.")
                 if on_progress:
-                    on_progress(batch_num, num_batches)
+                    on_progress(completed_lines, total)
                 break
             except Exception as e:
                 last_error = e
-                if attempt <= RETRY_COUNT:
-                    print(f"  Attempt {attempt} failed: {e}. Retrying ({attempt}/{RETRY_COUNT})...")
+                if attempt <= config.RETRY_COUNT:
+                    print(f"  Attempt {attempt} failed: {e}. Retrying ({attempt}/{config.RETRY_COUNT})...")
                 else:
                     raise ValueError(
-                        f"Batch {batch_num}/{num_batches} failed after {RETRY_COUNT + 1} attempt(s): {last_error}"
+                        f"Batch {batch_num}/{num_batches} failed after {config.RETRY_COUNT + 1} attempt(s): {last_error}"
                     ) from last_error
 
     if total_actual_input or total_actual_output:
         actual_total = total_actual_input + total_actual_output
         print(f"Actual tokens:    {total_actual_input} (input) + {total_actual_output} (output) = {actual_total} total")
-        actual_input_cost = (total_actual_input / 1000) * COST_PER_1K_INPUT
-        actual_output_cost = (total_actual_output / 1000) * COST_PER_1K_OUTPUT
+        actual_input_cost = (total_actual_input / 1000) * config.COST_PER_1K_INPUT
+        actual_output_cost = (total_actual_output / 1000) * config.COST_PER_1K_OUTPUT
         actual_cost = actual_input_cost + actual_output_cost
         print(f"Actual cost:      ${actual_input_cost:.4f} (input) + ${actual_output_cost:.4f} (output) = ${actual_cost:.4f}")
 

@@ -26,13 +26,6 @@ class SubtitleLine:
 
 
 class Subtitle:
-	"""Parse subtitle (SRT) text into a list of SubtitleLine objects.
-
-	Example:
-		s = Subtitle(srt_text)
-		s.lines -> list of SubtitleLine
-	"""
-
 	def __init__(self, srt_text: str, validate: bool = True, strict: bool = True):
 		self.raw = srt_text or ""
 		self.lines: List[SubtitleLine] = self._parse(self.raw)
@@ -60,7 +53,6 @@ class Subtitle:
 		if not text:
 			return []
 
-		# Split blocks separated by one or more blank lines
 		blocks = re.split(r"\n{2,}", text)
 		time_pattern = re.compile(r"\d{2}:\d{2}:\d{2},\d{3}\s*--?>\s*\d{2}:\d{2}:\d{2},\d{3}")
 
@@ -76,7 +68,6 @@ class Subtitle:
 			time_str = None
 			text_lines: List[str] = []
 
-			# Typical SRT: index, time, text...
 			if len(lines) >= 2 and time_pattern.search(lines[1]):
 				try:
 					idx = int(lines[0].strip())
@@ -85,15 +76,12 @@ class Subtitle:
 				time_str = lines[1].strip()
 				text_lines = [ln.rstrip() for ln in lines[2:]]
 			elif time_pattern.search(lines[0]):
-				# no index present, time on first line
 				time_str = lines[0].strip()
 				text_lines = [ln.rstrip() for ln in lines[1:]]
 			else:
-				# fallback: search for a time line inside the block
 				for i, ln in enumerate(lines):
 					if time_pattern.search(ln):
 						time_str = ln.strip()
-						# try to parse index from first line
 						try:
 							idx = int(lines[0].strip())
 						except Exception:
@@ -111,7 +99,6 @@ class Subtitle:
 		return result
 
 	def encode(self) -> List[str]:
-		"""Encode the subtitle lines back into SRT format."""
 		out = []
 		for ln in self.lines:
 			text = ln.text.replace("\n", "<br>")
@@ -161,7 +148,7 @@ class Subtitle:
 		errors: List[str] = []
 		time_re = re.compile(r"(\d{2}:\d{2}:\d{2},\d{3})\s*--?>\s*(\d{2}:\d{2}:\d{2},\d{3})")
 		seen = set()
-		# prev_end = None
+		
 		for ln in self.lines:
 			if ln.index in seen:
 				errors.append(f"Duplicate index {ln.index}")
@@ -175,20 +162,6 @@ class Subtitle:
 			if not m:
 				errors.append(f"Invalid time format for index {ln.index}: {ln.time_str}")
 				continue
-
-			# start_s, end_s = m.group(1), m.group(2)
-			# try:
-			# 	start_ms = _time_to_ms(start_s)
-			# 	end_ms = _time_to_ms(end_s)
-			# except Exception as e:
-			# 	errors.append(f"Invalid time values for index {ln.index}: {e}")
-			# 	continue
-
-			# if start_ms >= end_ms:
-			# 	errors.append(f"Start time >= end time for index {ln.index}: {ln.time_str}")
-			# if prev_end is not None and start_ms < prev_end:
-			# 	errors.append(f"Overlapping or out-of-order at index {ln.index}: starts {start_s} before previous end")
-			# prev_end = max(prev_end if prev_end is not None else 0, end_ms)
 
 			if ln.text == "":
 				errors.append(f"Empty text for index {ln.index}")
@@ -263,10 +236,6 @@ class Subtitle:
 
 
 def analyze_subtitle(srt_text: str, validate: bool = True, strict: bool = False) -> dict:
-	"""Analyze given subtitle text and return validation and metadata.
-
-	Returns a dict with keys: `valid`, `errors`, `info`.
-	"""
 	sub = Subtitle(srt_text, validate=False)
 	errors = sub.validate() if validate else []
 	if strict and errors:
@@ -284,7 +253,6 @@ def main(argv=None):
 	args = parser.parse_args(argv)
 
 	if not args.path or args.path == "-":
-		# read from stdin
 		srt_text = sys.stdin.read()
 	else:
 		try:
@@ -340,19 +308,16 @@ def main(argv=None):
 		if not error_found:
 			print("Encode-decode test passed: decoded lines match original lines.")
 		
-		# save lines to a temporary file for debugging
 		with open("encoded_subtitle.txt", "w", encoding="utf-8") as f:
 			for line in encoded_lines:
 				f.write(line + "\n")
 
-
 	except Exception as e:
 		print(f"Error parsing subtitle: {e}", file=sys.stderr)
 		sys.exit(2)
-	# exit with non-zero when invalid
+	
 	sys.exit(0 if res["valid"] else 1)
 
 
 if __name__ == "__main__":
 	main()
-

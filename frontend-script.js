@@ -231,7 +231,7 @@
                     if (j && j.status === 'pending' && j.progress) {
                         var parts = j.progress.split('/');
                         var pct = Math.round((parseInt(parts[0], 10) / parseInt(parts[1], 10)) * 100);
-                        statusEl.textContent = 'Translating ' + pct + '%';
+                        statusEl.textContent = 'Translating ' + pct + '% (' + j.progress + ')';
                     } else {
                         statusEl.textContent = j && j.status ? j.status : 'unknown';
                     }

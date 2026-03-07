@@ -12,11 +12,6 @@ _LOGGER_REGISTRY = []
 
 
 def _global_print(*args, sep=' ', end='\n', file=None, flush=False, **kwargs):
-    """Global print proxy: prints as normal and sends messages to registered loggers.
-
-    This function preserves the usual `print` behavior while also delivering
-    the rendered message to any registered `PocketLogger` instances.
-    """
     message_body = sep.join(map(str, args))
 
     console_message = message_body
@@ -29,20 +24,17 @@ def _global_print(*args, sep=' ', end='\n', file=None, flush=False, **kwargs):
     try:
         _ORIGINAL_PRINT(console_message, end=end, file=file, flush=flush, **kwargs)
     except TypeError:
-        # In case unexpected kwargs make this fail, fall back to a safe call.
         _ORIGINAL_PRINT(console_message, end=end, file=file, flush=flush)
+    
     if file is None or file in (sys.stdout, _ORIGINAL_STDOUT):
         for logger in list(_LOGGER_REGISTRY):
             try:
                 logger._log_from_print(message_body)
             except Exception:
-                # Swallow exceptions inside the global proxy to avoid breaking prints.
                 pass
 
 
 class _StdErrProxy:
-    """Proxy for sys.stderr that forwards writes to registered loggers and original stderr."""
-
     def write(self, data):
         if data and data.strip():
             for logger in list(_LOGGER_REGISTRY):
@@ -63,20 +55,6 @@ class _StdErrProxy:
 
 
 class PocketLogger:
-    """Lightweight logger that captures `print()` calls and `sys.stderr` writes to a file.
-
-    Args:
-        log_file_path: Path to the log file (string). If provided, ".log" is appended when missing.
-        print_time: If True, prefix console output with a timestamp.
-        print_message: If True, allow messages to be printed to the console.
-        save_time: If True, include timestamps in saved file entries.
-        save_message: If True, save the printed message into the log file.
-        add_date_and_time_to_log_file_name: If True, append the current datetime to the filename.
-        create_new_log_file: If True, find a unique filename when the target exists.
-
-    Use `restore()` to unregister the logger and restore `print`/`sys.stderr` when finished.
-    """
-
     def __init__(
         self,
         log_file_path: Optional[str] = None,
@@ -87,8 +65,6 @@ class PocketLogger:
         add_date_and_time_to_log_file_name: bool = False,
         create_new_log_file: bool = True,
     ) -> None:
-        # Public-facing parameter names preserved for backwards compatibility;
-        # internal attribute names are clearer.
         self._log_path = log_file_path
         self.console_timestamp = print_time
         self.console_print = print_message
@@ -110,15 +86,9 @@ class PocketLogger:
             if self.ensure_unique_log_file:
                 self._log_path = self._find_available_log_path(self._log_path)
 
-            # Register this logger so the global proxies will forward messages to it.
             self.register()
 
     def register(self) -> None:
-        """Register this instance with the global print/stderr proxies.
-
-        Registering is automatic when a `log_file_path` is provided in `__init__`.
-        Calling `register()` manually will re-register if previously restored.
-        """
         if self._is_registered:
             return
         _LOGGER_REGISTRY.append(self)
@@ -128,7 +98,6 @@ class PocketLogger:
             sys.stderr = _StdErrProxy()
 
     def restore(self) -> None:
-        """Unregister this logger and restore original `print` and `sys.stderr` when no loggers remain."""
         if not self._is_registered:
             return
         try:
@@ -141,7 +110,6 @@ class PocketLogger:
             sys.stderr = _ORIGINAL_STDERR
 
     def log(self, message: str) -> None:
-        """Write a formatted log entry to the logger's file according to settings."""
         if not self._log_path:
             return
 
@@ -159,14 +127,12 @@ class PocketLogger:
             with open(self._log_path, 'a', encoding='utf-8') as fh:
                 fh.write(save_message + '\n')
         except Exception:
-            # Don't raise from the logger; write an indicator to original stderr.
             try:
                 _ORIGINAL_STDERR.write(f"PocketLogger: failed writing to '{self._log_path}'\n")
             except Exception:
                 pass
 
     def log_raw(self, message: str) -> None:
-        """Append raw text to the log file (no formatting)."""
         if not self._log_path:
             return
         try:
@@ -178,10 +144,7 @@ class PocketLogger:
             except Exception:
                 pass
 
-    # Internal helpers -----------------------------------------
     def _log_from_print(self, message: str) -> None:
-        """Called from the global print proxy to log a print() message."""
-        # Use the public `log()` behavior to keep formatting consistent.
         self.log(message)
 
     def _find_available_log_path(self, path: str) -> str:
