@@ -8,5 +8,5 @@ services:
     volumes:
       - ./logs:/app/logs
       - /mnt/mediapool/movies:/movies
-      - /mnt/mediapool/tv:/tv
+      - /mnt/mediapool/tvshows:/tvshows
     restart: unless-stopped
