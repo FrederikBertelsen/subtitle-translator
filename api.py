@@ -5,7 +5,8 @@ import sys
 import threading
 import uuid
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Security
+from fastapi import Depends, FastAPI, HTTPException, Query, Security, Request
+from fastapi.responses import JSONResponse
 from fastapi.security.api_key import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -17,8 +18,6 @@ load_dotenv()
 _LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
 os.makedirs(_LOG_DIR, exist_ok=True)
 
-# Capture original stdout before any redirection so the StreamHandler
-# always writes to the real terminal, avoiding infinite recursion.
 _orig_stdout = sys.stdout
 
 logging.basicConfig(
@@ -51,15 +50,13 @@ log.info("Subtitle Translator starting up")
 _raw_api_key = os.getenv("API_KEY")
 if not _raw_api_key:
     raise ValueError("API_KEY not found in environment variables. Please set it in the .env file.")
-# Narrow the type for static checkers: API_KEY is guaranteed to be a str here.
 API_KEY: str = _raw_api_key
 
-ENDPOINT_SCRAMBLE = os.getenv("ENDPOINT_SCRAMBLE", "")
+TRANSLATION_ENDPOINT_SCRAMBLE = os.getenv("TRANSLATION_ENDPOINT_SCRAMBLE", "translate")
+JOB_ENDPOINT_SCRAMBLE = os.getenv("JOB_ENDPOINT_SCRAMBLE", "jobs")
 
+app = FastAPI(title="Subtitle Translator", docs_url=None, redoc_url=None, openapi_url=None)
 
-app = FastAPI(title="Subtitle Translator")
-
-# Configure CORS: use comma-separated origins from env var CORS_ALLOW_ORIGINS or allow all by default
 _cors_env = os.getenv("CORS_ALLOW_ORIGINS")
 if _cors_env:
     _cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()]
@@ -74,17 +71,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+_translation_path = f"/{TRANSLATION_ENDPOINT_SCRAMBLE}" if TRANSLATION_ENDPOINT_SCRAMBLE else "/translate"
+_job_root = f"/{JOB_ENDPOINT_SCRAMBLE}" if JOB_ENDPOINT_SCRAMBLE else "/jobs"
+
+@app.middleware("http")
+async def _restrict_endpoints(request: Request, call_next):
+    path = request.url.path.rstrip("/")
+    if path == "":
+        path = "/"
+    if path == _translation_path or path == _job_root or path.startswith(_job_root + "/"):
+        return await call_next(request)
+    return JSONResponse(status_code=404, content={"detail": "Not Found"})
+
 _api_key_header = APIKeyHeader(name="X-API-Key")
 
 def _require_api_key(key: str = Security(_api_key_header)) -> None:
-    # Security dependency may pass `None` in some edge cases; validate first.
     if key is None:
         raise HTTPException(status_code=403, detail="Invalid API key.")
     if not secrets.compare_digest(key, API_KEY):
         raise HTTPException(status_code=403, detail="Invalid API key.")
 
 
-# In-memory job store: job_id -> {status, result, error}
 _jobs: dict[str, dict] = {}
 
 
@@ -99,17 +106,18 @@ def _find_media_folders(name: str, type: str) -> list[str]:
         raise ValueError("MEDIA_BASE_PATH not set in environment variables.")
     base_paths = MEDIA_BASE_PATHS.split(",")
 
-    if type == "movie":
-        base_path = base_paths[0]  # movies path
-    else:
-        base_path = base_paths[1]  # tvshows path
+    matched_base_path = None
+    for base_path in base_paths:
+        if type.lower().strip() in base_path.lower():
+            matched_base_path = base_path
+            break
 
-    # Normalize the name by replacing common separators with spaces, and splitting into words
+    if not matched_base_path:
+        raise ValueError(f"Base path for type '{type}' not found.")
+
     name_words = _clean_name_and_split(name)
-
-    # look if there is a direct subfolder that contains all the words in the name
-    for entry in os.listdir(base_path):
-        entry_path = os.path.join(base_path, entry)
+    for entry in os.listdir(matched_base_path):
+        entry_path = os.path.join(matched_base_path, entry)
         if os.path.isdir(entry_path):
             entry_words = _clean_name_and_split(entry)
             
@@ -119,7 +127,7 @@ def _find_media_folders(name: str, type: str) -> list[str]:
                     matching_words += 1
                 
             if matching_words > len(name_words) - 1 and matching_words > len(entry_words) - 2:
-                # look for "Season X" direct subfolders of entry_path, and return them all
+
                 season_folders = []
                 for sub_entry in os.listdir(entry_path):
                     sub_entry_path = os.path.join(entry_path, sub_entry)
@@ -153,11 +161,11 @@ def _run(job_id: str, name: str, lang: str, type: str) -> None:
         _jobs[job_id] = {"status": "failed", "result": None, "error": str(e)}
 
 
-@app.post("/translate" if ENDPOINT_SCRAMBLE == "" else f"/{ENDPOINT_SCRAMBLE}", status_code=202)
+@app.post(_translation_path, status_code=202)
 async def translate(
     name: str = Query(..., description="Media name"),
     lang: str = Query(..., description="Target language code, e.g. 'en', 'da', 'de'"),
-    type: str = Query("movie", description="Media type: 'movie' or 'tvshow'"),
+    type: str = Query(..., description="Media type"),
     _: None = Depends(_require_api_key),
 ):
     """Start an async translation job for the given media name. Returns a job_id to poll."""
@@ -169,7 +177,7 @@ async def translate(
     return {"job_id": job_id}
 
 
-@app.get("/jobs/{job_id}")
+@app.get("{_job_root}/{job_id}")
 async def get_job(job_id: str, _: None = Depends(_require_api_key)):
     """Poll translation job status. When status is 'done', the result field contains the translated SRT."""
     job = _jobs.get(job_id)
