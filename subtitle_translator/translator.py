@@ -79,6 +79,8 @@ async def translate_subtitle(subtitle: Subtitle, target_language: str, on_progre
     print(f"Translating {total} subtitle lines to {target_language} in {num_batches} batch(es) of up to {config.BATCH_SIZE}...")
 
     semaphore = asyncio.Semaphore(config.MAX_CONCURRENT_REQUESTS)
+    batch_results = {}
+    completed_lines = 0
 
     async def _translate_batch_with_retry(batch_num: int, batch: list[str]) -> tuple[int, list[str]]:
         async with semaphore:
@@ -99,14 +101,16 @@ async def translate_subtitle(subtitle: Subtitle, target_language: str, on_progre
                         ) from last_error
             raise RuntimeError("Unreachable")
 
-    tasks = [_translate_batch_with_retry(i + 1, batch) for i, batch in enumerate(batches)]
-    results = await asyncio.gather(*tasks)
+    tasks = [asyncio.create_task(_translate_batch_with_retry(i + 1, batch)) for i, batch in enumerate(batches)]
+    
+    for coro in asyncio.as_completed(tasks):
+        batch_num, response_lines = await coro
+        batch_results[batch_num] = response_lines
+        completed_lines += len(batches[batch_num - 1])
+        if on_progress:
+            on_progress(completed_lines, total)
 
-    batch_results = {batch_num: response_lines for batch_num, response_lines in results}
     all_response_lines = [line for batch_num in sorted(batch_results.keys()) for line in batch_results[batch_num]]
-
-    if on_progress:
-        on_progress(total, total)
 
     print("Translation complete.")
     return subtitle.decode(all_response_lines)
