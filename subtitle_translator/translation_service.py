@@ -1,3 +1,4 @@
+import asyncio
 import os
 from subtitle_translator.subtitle import Subtitle
 from subtitle_translator.translator import translate_subtitle
@@ -35,7 +36,7 @@ def estimate_folder_progress_units(path: str) -> int:
     return max(total_units, len(video_files))
 
 
-def translate_folder(path: str, lang: str, on_progress=None) -> dict:
+async def translate_folder(path: str, lang: str, on_progress=None) -> dict:
     summary: dict = {"path": path, "lang": lang, "videos": {}}
 
     if not os.path.isdir(path):
@@ -158,7 +159,7 @@ def translate_folder(path: str, lang: str, on_progress=None) -> dict:
                 if on_progress:
                     on_progress(completed_units + current_units)
 
-            translated_subtitle = translate_subtitle(subtitle, lang, on_progress=_on_file_progress)
+            translated_subtitle = await translate_subtitle(subtitle, lang, on_progress=_on_file_progress)
         except Exception as e:
             video_result["status"] = "failed"
             _log(f"Translation failed: {e}")

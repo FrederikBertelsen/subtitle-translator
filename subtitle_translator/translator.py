@@ -1,11 +1,12 @@
-from openai import OpenAI
+import asyncio
+from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 from subtitle_translator.subtitle import Subtitle
 from subtitle_translator import config
 
 
-def _translate_batch(
-    client: OpenAI,
+async def _translate_batch(
+    client: AsyncOpenAI,
     batch: list[str],
     user_message: str,
 ) -> tuple[list[str], dict | None]:
@@ -18,7 +19,7 @@ def _translate_batch(
         {"role": "user", "content": content},
     ]
 
-    response = client.chat.completions.create(
+    response = await client.chat.completions.create(
         model=config.DEFAULT_MODEL,
         messages=messages,
         temperature=1,
@@ -57,7 +58,7 @@ def _translate_batch(
     return response_lines, usage_info
 
 
-def translate_subtitle(subtitle: Subtitle, target_language: str, on_progress=None) -> Subtitle:
+async def translate_subtitle(subtitle: Subtitle, target_language: str, on_progress=None) -> Subtitle:
     if not config.OPENAI_API_KEY:
         raise ValueError("OPENAI_API_KEY is not set in the environment variables.")
     if not config.DEFAULT_MODEL:
@@ -71,81 +72,41 @@ def translate_subtitle(subtitle: Subtitle, target_language: str, on_progress=Non
         context=config.CONTEXT_TEMPLATE,
     )
 
-    client = OpenAI(api_key=config.OPENAI_API_KEY)
+    client = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
     batches = [encoded_lines[i:i + config.BATCH_SIZE] for i in range(0, total, config.BATCH_SIZE)]
     num_batches = len(batches)
 
-    overhead_messages = [
-        {"role": "user", "content": user_message},
-        {"role": "assistant", "content": "Sure, I will translate the content exactly as requested."},
-    ]
-    overhead_count = client.responses.input_tokens.count(
-        model=config.DEFAULT_MODEL,
-        instructions=config.DEFAULT_SYS_PROMPT,
-        input=overhead_messages,  # type: ignore[arg-type]
-    )
-    overhead_tokens = overhead_count.input_tokens
-
-    content_tokens_sum = 0
-    for batch in batches:
-        batch_content = "\n".join(batch)
-        batch_count = client.responses.input_tokens.count(
-            model=config.DEFAULT_MODEL,
-            input=batch_content,
-        )
-        content_tokens_sum += batch_count.input_tokens
-
-    estimated_input_tokens = overhead_tokens * num_batches + content_tokens_sum
-    estimated_output_tokens = content_tokens_sum
-    estimated_total = estimated_input_tokens + estimated_output_tokens
-    print(f"Estimated tokens: {estimated_input_tokens} (input) + ~{estimated_output_tokens} (output) = ~{estimated_total} total")
-
-    estimated_input_cost = (estimated_input_tokens / 1000) * config.COST_PER_1K_INPUT
-    estimated_output_cost = (estimated_output_tokens / 1000) * config.COST_PER_1K_OUTPUT
-    estimated_cost = estimated_input_cost + estimated_output_cost
-    print(f"Estimated cost:   ${estimated_input_cost:.4f} (input) + ~${estimated_output_cost:.4f} (output) = ~${estimated_cost:.4f}")
-
-    if config.MAX_REQUEST_COST and estimated_cost > config.MAX_REQUEST_COST:
-        raise ValueError(f"Estimated cost ${estimated_cost:.4f} exceeds MAX_REQUEST_COST ${config.MAX_REQUEST_COST:.4f}. Aborting.")
-
     print(f"Translating {total} subtitle lines to {target_language} in {num_batches} batch(es) of up to {config.BATCH_SIZE}...")
 
-    all_response_lines: list[str] = []
-    total_actual_input = 0
-    total_actual_output = 0
-    completed_lines = 0
+    semaphore = asyncio.Semaphore(config.MAX_CONCURRENT_REQUESTS)
 
-    for batch_num, batch in enumerate(batches, start=1):
-        print(f"Batch {batch_num}/{num_batches} ({len(batch)} lines):")
-        last_error: Exception | None = None
-        for attempt in range(1, config.RETRY_COUNT + 2):
-            try:
-                response_lines, usage_info = _translate_batch(client, batch, user_message)
-                all_response_lines.extend(response_lines)
-                if usage_info:
-                    total_actual_input += usage_info.get("prompt_tokens", 0)
-                    total_actual_output += usage_info.get("completion_tokens", 0)
-                completed_lines += len(batch)
-                print(f"  Batch {batch_num}/{num_batches} completed.")
-                if on_progress:
-                    on_progress(completed_lines, total)
-                break
-            except Exception as e:
-                last_error = e
-                if attempt <= config.RETRY_COUNT:
-                    print(f"  Attempt {attempt} failed: {e}. Retrying ({attempt}/{config.RETRY_COUNT})...")
-                else:
-                    raise ValueError(
-                        f"Batch {batch_num}/{num_batches} failed after {config.RETRY_COUNT + 1} attempt(s): {last_error}"
-                    ) from last_error
+    async def _translate_batch_with_retry(batch_num: int, batch: list[str]) -> tuple[int, list[str]]:
+        async with semaphore:
+            print(f"Batch {batch_num}/{num_batches} ({len(batch)} lines): Starting")
+            last_error: Exception | None = None
+            for attempt in range(1, config.RETRY_COUNT + 2):
+                try:
+                    response_lines, _ = await _translate_batch(client, batch, user_message)
+                    print(f"Batch {batch_num}/{num_batches}: Completed")
+                    return batch_num, response_lines
+                except Exception as e:
+                    last_error = e
+                    if attempt <= config.RETRY_COUNT:
+                        print(f"Batch {batch_num}/{num_batches}: Attempt {attempt} failed: {e}. Retrying ({attempt}/{config.RETRY_COUNT})...")
+                    else:
+                        raise ValueError(
+                            f"Batch {batch_num}/{num_batches} failed after {config.RETRY_COUNT + 1} attempt(s): {last_error}"
+                        ) from last_error
+            raise RuntimeError("Unreachable")
 
-    if total_actual_input or total_actual_output:
-        actual_total = total_actual_input + total_actual_output
-        print(f"Actual tokens:    {total_actual_input} (input) + {total_actual_output} (output) = {actual_total} total")
-        actual_input_cost = (total_actual_input / 1000) * config.COST_PER_1K_INPUT
-        actual_output_cost = (total_actual_output / 1000) * config.COST_PER_1K_OUTPUT
-        actual_cost = actual_input_cost + actual_output_cost
-        print(f"Actual cost:      ${actual_input_cost:.4f} (input) + ${actual_output_cost:.4f} (output) = ${actual_cost:.4f}")
+    tasks = [_translate_batch_with_retry(i + 1, batch) for i, batch in enumerate(batches)]
+    results = await asyncio.gather(*tasks)
+
+    batch_results = {batch_num: response_lines for batch_num, response_lines in results}
+    all_response_lines = [line for batch_num in sorted(batch_results.keys()) for line in batch_results[batch_num]]
+
+    if on_progress:
+        on_progress(total, total)
 
     print("Translation complete.")
     return subtitle.decode(all_response_lines)

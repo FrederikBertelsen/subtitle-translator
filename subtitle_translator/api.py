@@ -1,5 +1,7 @@
+import asyncio
 import logging
 import os
+import queue
 import secrets
 import sys
 import threading
@@ -88,10 +90,13 @@ def _require_api_key(key: str = Security(_api_key_header)) -> None:
 
 
 _jobs: dict[str, dict] = {}
+_job_queue: queue.Queue = queue.Queue()
 
 
-def _run(job_id: str, name: str, lang: str, type: str) -> None:
+async def _run_job_async(job_id: str, name: str, lang: str, type: str) -> None:
     try:
+        _jobs[job_id]["status"] = "running"
+        
         paths = find_media_folders(name, type)
         if not paths:
             raise ValueError(f"Media folder not found for name: {name}")
@@ -111,7 +116,7 @@ def _run(job_id: str, name: str, lang: str, type: str) -> None:
                 _jobs[job_id]["progress"] = f"{global_current}/{total_work_units}"
 
             _jobs[job_id]["progress"] = f"{completed_work_units}/{total_work_units}"
-            summary = translate_folder(path, lang, on_progress=_on_progress)
+            summary = await translate_folder(path, lang, on_progress=_on_progress)
             summaries.append(summary)
             completed_work_units += folder_total_units
             _jobs[job_id]["progress"] = f"{completed_work_units}/{total_work_units}"
@@ -131,6 +136,23 @@ def _run(job_id: str, name: str, lang: str, type: str) -> None:
         }
 
 
+def _run_job(job_id: str, name: str, lang: str, type: str) -> None:
+    asyncio.run(_run_job_async(job_id, name, lang, type))
+
+
+def _job_worker() -> None:
+    while True:
+        job_data = _job_queue.get()
+        if job_data is None:
+            break
+        job_id, name, lang, type_ = job_data
+        _run_job(job_id, name, lang, type_)
+        _job_queue.task_done()
+
+
+threading.Thread(target=_job_worker, daemon=True).start()
+
+
 @app.post(_translation_path, status_code=202)
 async def translate(
     name: str = Query(..., description="Media name"),
@@ -139,10 +161,8 @@ async def translate(
     _: None = Depends(_require_api_key),
 ):
     job_id = str(uuid.uuid4())
-    _jobs[job_id] = {"status": "pending", "progress": None, "result": None, "error": None}
-
-    threading.Thread(target=_run, args=(job_id, name, lang, type), daemon=True).start()
-
+    _jobs[job_id] = {"status": "queued", "progress": None, "result": None, "error": None}
+    _job_queue.put((job_id, name, lang, type))
     return {"job_id": job_id}
 
 

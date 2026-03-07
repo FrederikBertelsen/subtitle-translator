@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 import sys
 from subtitle_translator.translation_service import translate_folder
 
@@ -10,7 +11,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     
     try:
-        summary = translate_folder(args.path, args.lang)
+        summary = asyncio.run(translate_folder(args.path, args.lang))
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
