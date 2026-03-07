@@ -38,9 +38,12 @@ class _PrintToLog:
         msg = msg.rstrip("\n\r")
         if msg.strip():
             log.info(msg)
+            for handler in logging.root.handlers:
+                handler.flush()
 
     def flush(self) -> None:
-        pass
+        for handler in logging.root.handlers:
+            handler.flush()
 
 
 sys.stdout = _PrintToLog()
