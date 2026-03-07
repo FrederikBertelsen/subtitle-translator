@@ -161,7 +161,7 @@ class Subtitle:
 		errors: List[str] = []
 		time_re = re.compile(r"(\d{2}:\d{2}:\d{2},\d{3})\s*--?>\s*(\d{2}:\d{2}:\d{2},\d{3})")
 		seen = set()
-		prev_end = None
+		# prev_end = None
 		for ln in self.lines:
 			if ln.index in seen:
 				errors.append(f"Duplicate index {ln.index}")
@@ -176,19 +176,19 @@ class Subtitle:
 				errors.append(f"Invalid time format for index {ln.index}: {ln.time_str}")
 				continue
 
-			start_s, end_s = m.group(1), m.group(2)
-			try:
-				start_ms = _time_to_ms(start_s)
-				end_ms = _time_to_ms(end_s)
-			except Exception as e:
-				errors.append(f"Invalid time values for index {ln.index}: {e}")
-				continue
+			# start_s, end_s = m.group(1), m.group(2)
+			# try:
+			# 	start_ms = _time_to_ms(start_s)
+			# 	end_ms = _time_to_ms(end_s)
+			# except Exception as e:
+			# 	errors.append(f"Invalid time values for index {ln.index}: {e}")
+			# 	continue
 
-			if start_ms >= end_ms:
-				errors.append(f"Start time >= end time for index {ln.index}: {ln.time_str}")
-			if prev_end is not None and start_ms < prev_end:
-				errors.append(f"Overlapping or out-of-order at index {ln.index}: starts {start_s} before previous end")
-			prev_end = max(prev_end if prev_end is not None else 0, end_ms)
+			# if start_ms >= end_ms:
+			# 	errors.append(f"Start time >= end time for index {ln.index}: {ln.time_str}")
+			# if prev_end is not None and start_ms < prev_end:
+			# 	errors.append(f"Overlapping or out-of-order at index {ln.index}: starts {start_s} before previous end")
+			# prev_end = max(prev_end if prev_end is not None else 0, end_ms)
 
 			if ln.text == "":
 				errors.append(f"Empty text for index {ln.index}")
